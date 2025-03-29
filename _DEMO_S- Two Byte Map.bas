@@ -81,14 +81,15 @@ TYPE dataTypeHero ' Hero is separate from the other objects
 END TYPE: DIM SHARED Hero AS dataTypeHero
 
 TYPE dataTypeObject ' Will be used for non-hero objects like bushes
-  TrueX AS INTEGER
-  TrueY AS INTEGER
-  Type AS INTEGER ' works!
-  Dir AS INTEGER
-  Data0 AS INTEGER
-  Data1 AS INTEGER
-  Data2 AS INTEGER
-  Data3 AS INTEGER
+  TrueX AS _UNSIGNED INTEGER
+  TrueY AS _UNSIGNED INTEGER
+  Type AS _UNSIGNED _BYTE ' works as a variable name in this case, despite also being a command
+  Dir AS _UNSIGNED _BYTE
+  Data0 AS _UNSIGNED _BYTE
+  Data1 AS _UNSIGNED _BYTE
+  Data2 AS _UNSIGNED _BYTE
+  Data3 AS _UNSIGNED _BYTE
+  Layer AS _UNSIGNED INTEGER
 END TYPE: DIM SHARED Obj(255) AS dataTypeObject
 
 COMMON SHARED objCount AS _UNSIGNED INTEGER
@@ -161,7 +162,7 @@ viewSizeTilesY = (viewSizeBlocksX * 2)
 
 COMMON SHARED wrapHorizontal, wrapVertical ' Defaults to zero
 
-COMMON SHARED editMode, ptMode, showShadows
+COMMON SHARED modeEdit, modePT, modeInfo, showShadows
 COMMON SHARED mapZeroOrigSizeY, mapBytesPer, numMaps, mapNum, mapPosX, mapPosY, mapEdgeTaperRows
 ' mapZeroOrigSizeY will be smaller than the world map
 ' mapEdgeTaperRows always needs to be even
@@ -182,7 +183,7 @@ COMMON SHARED compassDir ' For flipping vertically the display order of 16x16 bl
 
 COMMON SHARED walkActive, walkDistance, walkDir, walkDirWhenDone
 
-editMode = 0 ' Now we turn it on to start
+modeEdit = 0 ' Now we turn it on to start
 
 trimHorizontal = 1
 StoreMapZeroEfficient = 0 ' Store the triangles of RPG world map data in the hidden top triangles
@@ -193,8 +194,8 @@ mapHeader(0).MpSizeY = 32 ' Will be overwritten by file load, and also when init
 mapBytesPer = 1
 compassDir = NORTH
 
-Hero.hTrueX = 16 * 30 ' These are split into screen positions and map positions later
-Hero.hTrueY = 16
+Hero.hTrueX = 16 * 20 ' These are split into screen positions and map positions later
+Hero.hTrueY = 16 * 9
 
 barrierNum = 16 ' If tile numbers are higher than this, the player can't move through them
 
@@ -256,7 +257,7 @@ SUB a_main ' Main subroutine of our program
 
     DO ' Begin inner loop
 
-      'if editMode > 0 or ptMode > 0 then _LIMIT 60 ' Slows the game down to 60 FPS so it isn't too fast
+      'if modeEdit > 0 or modePT > 0 then _LIMIT 60 ' Slows the game down to 60 FPS so it isn't too fast
 
       mouseReadInput
 
@@ -268,7 +269,7 @@ SUB a_main ' Main subroutine of our program
 
       ' Poll the controls several times per loop, that seems to work best in terms of game speed
 
-      IF editMode = 0 THEN
+      IF modeEdit = 0 THEN
         processInput ("")
         processInput ("")
         processInput ("")
@@ -304,53 +305,55 @@ SUB addShadows
 END SUB
 
 '''''''''''''''''''''''''''''''
-SUB adjustToScreenPos (wObj, toChangeX, toChangeY, passBackX AS INTEGER, passBackY AS INTEGER) ' Returns wPosX and wPosY by reference
-  ' passBackX and PassBackY can actually return as negative values
+SUB adjustToScreenPos (wObj, toChangeX, toChangeY, passBackX AS INTEGER, passBackY AS INTEGER)
+  ' Calculates the screen pixel offset (passBackX, passBackY) relative to the
+  ' top-left of the playfield (viewStartPixelsX, viewStartPixelsY) for an object
+  ' at true world coordinates (toChangeX, toChangeY), considering map scrolling (mapPosX, mapPosY).
+  ' Assumes map wrapping is always enabled.
 
-  'IF mapPosX <= 320 THEN ' (mapHeader(wMap).MpSizeX * 16) + (viewCenterPosX * 16) THEN
-  'passBackX = wrapSubtract(toChangeX, mapHeader(wMap).MpSizeX * 16, mapPosX) '- (viewCenterPosX * 16)
-  'ESCAPE mapPosX
+  DIM halfMapSizeX AS _UNSIGNED INTEGER ' Using _UNSIGNED INTEGER for half sizes is okay, but calculations involve signed differences
+  DIM halfMapsizeY AS _UNSIGNED INTEGER ' Consider using signed INTEGER or LONG if map sizes could lead to large negative differences
 
-  ZLOCATE 16, 40
-  PRINT " DRAWING "
+  halfMapSizeX = (mapHeader(mapNum).MpSizeX * 16) \ 2 ' Calculate half width directly
+  halfMapsizeY = (mapHeader(mapNum).MpSizeY * 16) \ 2 ' Calculate half height directly
 
-  IF mapPosX < ((mapHeader(mapNum).MpSizeX) * 16) THEN
-    passBackX = toChangeX - mapPosX
+  '  IF wObj = 0 THEN
+  '    ZLOCATE 0, 0: PRINT mapPosX, toChangeX
+  '  END IF
+
+  '''' X Coordinate Calculation ''''
+  passBackX = toChangeX - mapPosX ' Calculate the direct difference
+
+  ' If more than half the map away in the negative direction,
+  ' wrap around from the other side (object is effectively to the right)
+  IF passBackX < -halfMapSizeX THEN
+    passBackX = passBackX + (mapHeader(mapNum).MpSizeX * 16) ' Add full map pixel width
   ELSE
-    passBackX = toChangeX + (mapHeader(mapNum).MpSizeX * 16) - mapPosX
+    IF passBackX > halfMapSizeX THEN ' See if the object is effectively to the left
+      passBackX = passBackX - (mapHeader(mapNum).MpSizeX * 16) ' Subtract full map pixel width
+    END IF
+
+    ' Otherwise, passBackX was originally set correctly, do not change
+
   END IF
 
-  IF mapPosY < ((mapHeader(mapNum).MpSizeY) * 16) THEN
-    passBackX = toChangeX - mapPosY
+  '''' Y Coordinate Calculation ''''
+  passBackY = toChangeY - mapPosY ' Calculate the direct difference
+
+  ' If more than half the map away in the negative direction,
+  ' wrap around from the other side (object is effectively below)
+  IF passBackY < -halfMapsizeY THEN
+    passBackY = passBackY + (mapHeader(mapNum).MpSizeY * 16) ' Add full map pixel height
   ELSE
-    passBackY = toChangeY + (mapHeader(mapNum).MpSizeY * 16) - mapPosY
+    IF passBackY > halfMapsizeY THEN ' See if the object is effectively to the left
+      passBackY = passBackY - (mapHeader(mapNum).MpSizeY * 16) ' Subtract full map pixel height
+    END IF
+
+    ' Otherwise, passBackY was originally set correctly, do not change
+
   END IF
 
-  DIM DX AS INTEGER ' Signed integer
-  DIM DY AS INTEGER ' Signed integer
-
-  DX = shRight(Hero.hTrueX, 4)
-  DY = shRight(Hero.hTrueY, 4)
-
-  ' If DX < 10 then we're looking at the right edge of the map
-
-  ' IF DX > 0 THEN STOP
-  'if passBackX > 0 then stop2
-  ' ESCAPE toChangeX
-  ' ESCAPE tempVar
-  'passBackX = tempVar
-
-  'END IF
-
-  'IF mapPosY <= (mapHeader(wMap).MpSizeY * 16) + (viewCenterPosY * 16) THEN
-  'passBackY = toChangeY - mapPosY - 16 '- (viewCenterPosY * 16)
-  'ELSE
-
-  'passBackY = Obj(wObj).TrueY + (wObj * 4)
-  'passBackY = 16
-  'END IF
-
-END SUB
+END SUB ' adjustToScreenPos
 
 ''''''''''''''''''''''''''''''''
 FUNCTION bitRead (wByte AS _UNSIGNED _BYTE, wPos AS INTEGER)
@@ -688,9 +691,9 @@ SUB displayFlashText
 END SUB ' displayFlashText
 ''''''''''''''''''''''''''''''''
 
-SUB displayPtMode1 ' Display pattern tables
+SUB displaymodePT1 ' Display pattern tables
 
-  f = drawGamePalettesPMI(3, 0, ptMode) ' Mouse input included
+  f = drawGamePalettesPMI(3, 0, modePT) ' Mouse input included
   IF f <> -1 THEN ptmPalSelect = f
 
   ' Draw bmp palette grid at lower left
@@ -825,14 +828,14 @@ SUB displayPtMode1 ' Display pattern tables
   ZLOCATE textInfoX + 8, 3
   PRINT "MSY:"; mPosY
 
-END SUB ' displayPTMode1
+END SUB ' displaymodePT1
 ''''''''''''''''''''''''''''''''
 
-SUB displayPtMode2 ' Fairy Table
+SUB displaymodePT2 ' Fairy Table
 
   centerFairyStripSpecial
 
-  f = drawGamePalettesPMI(3, 0, ptMode) ' Mouse input included
+  f = drawGamePalettesPMI(3, 0, modePT) ' Mouse input included
   IF f <> -1 THEN ptmPalSelect = f
 
   ' Avoid using ptm1TileSelect in this function
@@ -1011,7 +1014,7 @@ SUB displayPtMode2 ' Fairy Table
     NEXT ' ii
   END IF ' Mouse input for AUTOFILL button
 
-  f = drawFairyStripPMI(176, ptmPtnTableSelect, ptMode, 1)
+  f = drawFairyStripPMI(176, ptmPtnTableSelect, modePT, 1)
 
   tempY = 240
   LINE (0, 239)-(511, 239), 8 ' Gray separator line
@@ -1076,10 +1079,10 @@ SUB displayPtMode2 ' Fairy Table
     NEXT ' iy
   END IF ' End if mouse1Clicked
 
-END SUB ' displayPtMode2
+END SUB ' displaymodePT2
 
 ''''''''''''''''''''''''''''''''
-SUB displayPtMode3 ' Display Golem Blocks
+SUB displaymodePT3 ' Display Golem Blocks
 
   ' This function uses ptm3PalSelect instead of ptmPalSelect
   ' This function usees ptm3PtnTableSelect instead of ptmPtnTableSelect
@@ -1094,7 +1097,7 @@ SUB displayPtMode3 ' Display Golem Blocks
     ptmGolemSelect = ptmGolemSelect OR 128
   END IF
 
-  f = drawGamePalettesPMI(3, 0, ptMode) ' Mouse input included
+  f = drawGamePalettesPMI(3, 0, modePT) ' Mouse input included
   IF f <> -1 THEN ptm3PalSelect = f
 
   ' Print mouse position x and y
@@ -1175,7 +1178,7 @@ SUB displayPtMode3 ' Display Golem Blocks
 
   ' Draw two strips of fairy table, each from their own pattern table
 
-  f = drawFairyStripPMI(176, ptm3PtnTableSelect, ptMode, 1) ' First with top labels
+  f = drawFairyStripPMI(176, ptm3PtnTableSelect, modePT, 1) ' First with top labels
   ' If clicking on the fairy strip, assign golem table a tile value
 
   IF f <> -1 THEN
@@ -1186,7 +1189,7 @@ SUB displayPtMode3 ' Display Golem Blocks
   END IF
 
   ' Clicking will rotate around table strips
-  f = drawFairyStripPMI(220, (ptm3PtnTableSelect + 1) AND 1, ptMode, 0) ' Pattern table 2
+  f = drawFairyStripPMI(220, (ptm3PtnTableSelect + 1) AND 1, modePT, 0) ' Pattern table 2
   ' If clicking on the fairy strip, assign golem table a tile value
 
   IF f <> -1 THEN ' -1 is no click
@@ -1258,7 +1261,7 @@ SUB displayPtMode3 ' Display Golem Blocks
     IF ptm3PtnTableSelect < 1 THEN ptm3PtnTableSelect = ptm3PtnTableSelect + 1
   END IF
 
-END SUB ' displayPtMode3
+END SUB ' displaymodePT3
 
 ''''''''''''''''''''''''''''''''
 SUB drawBorderBox (wPosX, wPosY, wSizeX, wSizeY, fgClr, bgClr)
@@ -1294,7 +1297,7 @@ END SUB
 ''''''''''''''''''''''''''''''''
 FUNCTION drawFairyStripPMI (wStartY, wTable, wMode, topLabel)
 
-  drawFairyStripPMI = -1 ' Will change if something is clicked, only ptMode 3 uses
+  drawFairyStripPMI = -1 ' Will change if something is clicked, only modePT 3 uses
 
   ' Mode 2 includes numbering in decimal, gray, and highlight boxes
 
@@ -1635,8 +1638,10 @@ SUB drawObjFrameByObj (wObj, wTable, wIndex, wPal, wFlip, flagWrap)
   wPosX = 0
   wPosY = 0
 
-  IF wObj > 0 THEN ZLOCATE 16, 41
-  PRINT " DRAWING > 0"
+  IF wObj > 0 THEN
+    ZLOCATE 16, 41
+    PRINT " DRAWING > 0"
+  END IF
 
   adjustToScreenPos wObj, Obj(wObj).TrueX, Obj(wObj).TrueY, wPosX, wPosY ' Returns wPos variables by reference to wPos
 
@@ -2357,10 +2362,12 @@ SUB initObjects ' Declare objects, make certain ones solid or mobile
 
   objCount = 0 ' Will change as I add, insert, and delete objects
 
-  FOR ii = 0 TO 63
-    objectAdd ii * 32, 4 * 16, objBush, SOUTH
-    objectAdd ii * 32 + 16, 4 * 16, objGrave, SOUTH
+  objectAdd 1 * 16, 4 * 16, objGrave, SOUTH
+  FOR ii = 2 TO 61
+    objectAdd ii * 16, ii * 16, objBush, SOUTH
   NEXT
+  objectAdd ii * 16, ii * 16, objGrave, SOUTH ' ii will be one higher
+  objectAdd (ii + 1) * 16, (ii + 1) * 16, objGrave, SOUTH ' last two will be doors
 
 END SUB ' initObjects
 
@@ -3061,7 +3068,7 @@ FUNCTION moveCheckPlusEast (useCornerMechanic, checkBorder)
     Hero.Dir = EAST
     ff = moveCheck(Hero.hTrueX, Hero.hTrueY, EAST, checkBorder)
 
-    IF editMode = 1 THEN
+    IF modeEdit = 1 THEN
       IF ff = 0 THEN
         Hero.hTrueX = wrapAdd(Hero.hTrueX, mapHeader(mapNum).MpSizeX * 16, 16) ' Move a full block
         moveCheckPlusEast = 1 ' Flag that player moved
@@ -3144,7 +3151,7 @@ FUNCTION moveCheckPlusNorth (useCornerMechanic, checkBorder)
 
     ff = moveCheck(Hero.hTrueX, Hero.hTrueY, NORTH, checkBorder)
 
-    IF editMode = 1 THEN
+    IF modeEdit = 1 THEN
       IF ff = 0 THEN
         Hero.hTrueY = wrapSubtract(Hero.hTrueY, mapHeader(mapNum).MpSizeY * 16, 16) ' Move a full block
         moveCheckPlusNorth = 1 ' Flag that player moved
@@ -3225,7 +3232,7 @@ FUNCTION moveCheckPlusSouth (useCornerMechanic, checkBorder)
     Hero.Dir = SOUTH
     ff = moveCheck(Hero.hTrueX, Hero.hTrueY, SOUTH, checkBorder)
 
-    IF editMode = 1 THEN
+    IF modeEdit = 1 THEN
       IF ff = 0 THEN
         Hero.hTrueY = wrapAdd(Hero.hTrueY, mapHeader(mapNum).MpSizeY * 16, 16) ' Move a full block
         moveCheckPlusSouth = 1 ' Flag that player moved
@@ -3312,7 +3319,7 @@ FUNCTION moveCheckPlusWest (useCornerMechanic, checkBorder)
     Hero.Dir = WEST
     ff = moveCheck(Hero.hTrueX, Hero.hTrueY, WEST, checkBorder)
 
-    IF editMode = 1 THEN
+    IF modeEdit = 1 THEN
       IF ff = 0 THEN
 
         Hero.hTrueX = wrapSubtract(Hero.hTrueX, mapHeader(mapNum).MpSizeX * 16, 16) ' Move a full block
@@ -3404,7 +3411,7 @@ FUNCTION moveCheckPoint (passBackX, passBackY, checkBorder)
     passBackY = wrapAt(passBackY, mapHeader(mapNum).MpSizeY * 16)
   END IF
 
-  IF editMode = 1 THEN ' Verified within map bounds, now if in edit mode, okay to move
+  IF modeEdit = 1 THEN ' Verified within map bounds, now if in edit mode, okay to move
     EXIT FUNCTION ' returns 0
   END IF
 
@@ -3422,15 +3429,16 @@ FUNCTION moveCheckPoint (passBackX, passBackY, checkBorder)
     EXIT FUNCTION
   END IF
 
-  '' Check against objects, object barriers
+  '' Check against objects, object barriers, barrier check, object obstacle
 
   FOR ii = 1 TO objCount - 1 ' Starts at 1 because hero is 0
-    IF ObjInfo(ii).Solid = 1 THEN
+
+    IF ObjInfo(Obj(ii).Type).Solid = 1 THEN
 
       ' objInvalid, objBush, objGrave
 
       ' Compare the player's position to the object position
-      IF passBackX >= Obj(ii).TrueX AND passBackX <= Obj(ii).TrueX + 15 AND passBackY >= Obj(1).TrueY AND passBackY <= Obj(1).TrueY + 15 THEN
+      IF passBackX >= Obj(ii).TrueX AND passBackX <= Obj(ii).TrueX + 15 AND passBackY >= Obj(ii).TrueY AND passBackY <= Obj(ii).TrueY + 15 THEN
         moveCheckPoint = 1 ' If so, do not move
         EXIT FUNCTION
       END IF
@@ -3721,10 +3729,10 @@ SUB processInput (IN$) ' Process keyboard input
   END IF
 
   IF keyCheck("P") THEN ' Toggle pattern table mode
-    IF ptMode >= 3 THEN ' Can go up to mode 3
-      ptMode = 0
+    IF modePT >= 3 THEN ' Can go up to mode 3
+      modePT = 0
     ELSE
-      ptMode = ptMode + 1
+      modePT = modePT + 1
     END IF
     waitKeyRelease "P"
     EXIT SUB
@@ -3789,8 +3797,8 @@ SUB processInput (IN$) ' Process keyboard input
     IF Obj(2).TrueX = Obj(0).TrueX > (viewSizeBlocksX * 16) THEN Obj(0).TrueX = 0
   END IF
 
-  IF ptMode > 0 THEN
-    processInputPTMode (IN$)
+  IF modePT > 0 THEN
+    processInputmodePT (IN$)
     EXIT SUB
   END IF
 
@@ -3844,7 +3852,7 @@ SUB processInput (IN$) ' Process keyboard input
     END IF ' walkDistance
   END IF
 
-  IF editMode = 1 THEN ' Fix a rare bug where if the player pushes a direction about the same time as edit, it doesn't align
+  IF modeEdit = 1 THEN ' Fix a rare bug where if the player pushes a direction about the same time as edit, it doesn't align
     Hero.hTrueX = Hero.hTrueX AND 4080 ' 1111.11110000
     Hero.hTrueY = Hero.hTrueY AND 4080
   END IF
@@ -3926,16 +3934,16 @@ SUB processInput (IN$) ' Process keyboard input
 
   END IF
 
-  IF keyCheck("E") AND ptMode = 0 THEN ' Toggle edit mode
+  IF keyCheck("E") AND modePT = 0 THEN ' Toggle edit mode
 
-    IF editMode = 0 THEN
-      editMode = 1
+    IF modeEdit = 0 THEN
+      modeEdit = 1
 
       Hero.hTrueX = Hero.hTrueX AND 4080 ' 1111.11110000
       Hero.hTrueY = Hero.hTrueY AND 4080
 
     ELSE
-      editMode = 0
+      modeEdit = 0
     END IF
     waitKeyRelease "E"
     EXIT SUB
@@ -3973,7 +3981,7 @@ SUB processInput (IN$) ' Process keyboard input
 
   ' Map editing
 
-  IF keyCheck("ENT") AND editMode = 1 THEN ' ENTER during edit mode, change map objects
+  IF keyCheck("ENT") AND modeEdit = 1 THEN ' ENTER during edit mode, change map objects
     waitKeyRelease "ENT"
 
     discard$ = INKEY$ ' Somehow fixes a bug that skips over input statements, may be _DISPLAY related
@@ -4013,16 +4021,16 @@ SUB processInput (IN$) ' Process keyboard input
     END SELECT
 
     EXIT SUB
-  END IF ' Enter key when in editMode
+  END IF ' Enter key when in modeEdit
 
 END SUB ' processInput
 
 '''''''''''''''''''''''''''''''
-SUB processInputPTMode (IN$) ' Process keyboard input when in either PT mode
+SUB processInputmodePT (IN$) ' Process keyboard input when in either PT mode
 
   IF IN$ <> "" THEN ESCAPE 222 ' Ensure I never call this without something in IN$
 
-  IF ptMode = 2 THEN ' For the fairy table scroll bar keyboard control
+  IF modePT = 2 THEN ' For the fairy table scroll bar keyboard control
 
     IF keyCheck("4") THEN
       ' Decrement the fairy table block selected
@@ -4046,9 +4054,9 @@ SUB processInputPTMode (IN$) ' Process keyboard input when in either PT mode
       waitKeyRelease "M"
     END IF
 
-  END IF ' ptMode 2
+  END IF ' modePT 2
 
-  IF ptMode = 3 THEN
+  IF modePT = 3 THEN
 
     IF keyCheck("F") THEN
       gTable(ptmGolemSelect).Flip = gTable(ptmGolemSelect).Flip + 1
@@ -4064,19 +4072,19 @@ SUB processInputPTMode (IN$) ' Process keyboard input when in either PT mode
 
   END IF
 
-  ' Page up to increase tile table in ptMode 2
+  ' Page up to increase tile table in modePT 2
   IF keyCheck("HOME") THEN
     IF ptmPtnTableSelect > 0 THEN ptmPtnTableSelect = ptmPtnTableSelect - 1
     waitKeyRelease ("HOME")
   END IF
 
-  ' Page up to increase tile table in ptMode 2
+  ' Page up to increase tile table in modePT 2
   IF keyCheck("END") THEN
     IF ptmPtnTableSelect < 3 THEN ptmPtnTableSelect = ptmPtnTableSelect + 1
     waitKeyRelease ("END")
   END IF
 
-  ' Page down to increase selected palette table in ptMode 1 or 2
+  ' Page down to increase selected palette table in modePT 1 or 2
   IF keyCheck("PGUP") THEN
     IF ptmPalSelect > 0 THEN
       ptmPalSelect = ptmPalSelect - 1
@@ -4089,7 +4097,7 @@ SUB processInputPTMode (IN$) ' Process keyboard input when in either PT mode
 
   IF keyCheck("PGDN") THEN
 
-    ' Page up to increase selected palette in ptMode 1 or 2
+    ' Page up to increase selected palette in modePT 1 or 2
     IF ptmPalSelect < 16 THEN
       ptmPalSelect = ptmPalSelect + 1
     ELSE
@@ -4100,7 +4108,7 @@ SUB processInputPTMode (IN$) ' Process keyboard input when in either PT mode
     EXIT SUB
   END IF
 
-END SUB ' processInputPTMode
+END SUB ' processInputmodePT
 
 '''''''''''''''''''''''''''''''
 SUB processMouseInputRedrawAll ' process mouse input for non-edit mode, called at the end of redrawall to ensure I can draw boxes
@@ -4277,7 +4285,7 @@ SUB PSETmult (wPosX, wPosY, wClr, wSize) ' Draws a 2 x 2 pixel or a 3 x 3 pixel 
 END SUB ' PSETmult
 
 '''''''''''''''''''''''''''''''
-FUNCTION pTableStart ' Returns the table base index of the pTable selected in ptEditMode
+FUNCTION pTableStart ' Returns the table base index of the pTable selected in modePTEdit
 
   pTableStart = ptmPtnTableSelect * 256
 
@@ -4297,25 +4305,25 @@ SUB redrawAll
   COLOR 15
   CLS
 
-  'PRINT "MODE "; cTrNum$(ptMode); ": ";
-  SELECT CASE ptMode
+  'PRINT "MODE "; cTrNum$(modePT); ": ";
+  SELECT CASE modePT
     CASE 0: ' Normal gameplay, draw border box around playfield area
       drawBorderBox viewStartPixelsX - 1, viewStartPixelsY - 1, (viewSizeTilesX * 8) + 2, (viewSizeTilesY * 8) + 2, 14, 0
 
     CASE 1:
       ZLOCATE 9, 0
       PRINT "MODE 1: PALETTES"
-      displayPtMode1
+      displaymodePT1
       EXIT SUB
     CASE 2:
       ZLOCATE 9, 0
       PRINT "MODE 2: FTBL VIEW"
-      displayPtMode2
+      displaymodePT2
       EXIT SUB
     CASE 3:
       ZLOCATE 9, 0
       PRINT "MODE 3: GOLEM TBL"
-      displayPtMode3
+      displaymodePT3
       EXIT SUB
 
     CASE ELSE: PRINT "ERROR"
@@ -4354,7 +4362,7 @@ SUB redrawAll
 
   wPal = 1
 
-  IF editMode = 1 THEN hWalkFrame = 0
+  IF modeEdit = 1 THEN hWalkFrame = 0
 
   SELECT CASE Hero.Dir
     CASE SOUTH: ' facing south
@@ -4482,7 +4490,7 @@ SUB redrawAll
 
   ZLOCATE textX, 1
   PRINT "Edit Mode:";
-  IF editMode = 0 THEN
+  IF modeEdit = 0 THEN
     PRINT "OFF"
   ELSE
     PRINT "ON"
@@ -4625,9 +4633,9 @@ SUB redrawAll
 
   ' I can't put this in processInput because I want to draw boxes and it automatically clears them, so process it here
 
-  IF ptMode > 0 THEN EXIT SUB ' Here on out non-editMode
+  IF modePT > 0 THEN EXIT SUB ' Here on out non-modeEdit
 
-  processMouseInputRedrawAll ' handle any input clicks when not in ptMode
+  processMouseInputRedrawAll ' handle any input clicks when not in modePT
 
 
 END SUB ' redrawAll
